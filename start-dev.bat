@@ -20,9 +20,8 @@ if not exist "venv" (
     python -m venv venv
 )
 call venv\Scripts\activate.bat
-if not exist "storage (
-    echo 安装依赖...
-    pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+if not exist "requirements.txt" (
+    echo 依赖未安装，请手动运行: pip install -r requirements.txt
 )
 echo.
 echo ========================================
