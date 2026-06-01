@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
+import WelcomePage from './WelcomePage'
+import HubConfig from './HubConfig'
+import LeafConfig from './LeafConfig'
 
 interface User {
   id: string
@@ -35,7 +38,7 @@ interface LogEntry {
 
 const API_BASE = '/api'
 
-function Login({ onLogin }: { onLogin: (token: string, user: User) => void }) {
+function Login({ onLogin, onBack }: { onLogin: (token: string, user: User) => void, onBack: () => void }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -62,6 +65,7 @@ function Login({ onLogin }: { onLogin: (token: string, user: User) => void }) {
   return (
     <div className="login-container">
       <div className="login-card">
+        <button className="back-btn" onClick={onBack} style={{alignSelf: 'flex-start'}}>← 返回</button>
         <h2>🔬 LabVault</h2>
         {error && <div className="alert-box alert-warning">{error}</div>}
         <form onSubmit={handleSubmit}>
@@ -140,7 +144,7 @@ function FileList({ zone, title }: { zone: string, title: string }) {
     }
   }
 
-  const handleFileUpload = async (file: File) => {
+  const handleFileUpload = async (file: any) => {
     try {
       const formData = new FormData()
       formData.append('file', file)
@@ -275,35 +279,9 @@ function Logs() {
   )
 }
 
-function App() {
-  const [token, setToken] = useState<string | null>(localStorage.getItem('token'))
-  const [user, setUser] = useState<User | null>(null)
+function MainApp({ user, onLogout }: { user: User, onLogout: () => void }) {
   const [currentPage, setCurrentPage] = useState('data')
   const [collabTab, setCollabTab] = useState('date')
-
-  useEffect(() => {
-    if (token) {
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
-      axios.get(`${API_BASE}/users/me`).then((res) => setUser(res.data))
-    }
-  }, [token])
-
-  const handleLogin = (newToken: string, newUser: User) => {
-    localStorage.setItem('token', newToken)
-    setToken(newToken)
-    setUser(newUser)
-  }
-
-  const handleLogout = () => {
-    localStorage.removeItem('token')
-    setToken(null)
-    setUser(null)
-    delete axios.defaults.headers.common['Authorization']
-  }
-
-  if (!token || !user) {
-    return <Login onLogin={handleLogin} />
-  }
 
   return (
     <div className="container">
@@ -348,7 +326,7 @@ function App() {
           </h1>
           <div className="user-info">
             <span>👤 {user.name} ({user.level})</span>
-            <button className="btn btn-secondary btn-sm" onClick={handleLogout}>
+            <button className="btn btn-secondary btn-sm" onClick={onLogout}>
               退出
             </button>
           </div>
@@ -388,6 +366,72 @@ function App() {
       </div>
     </div>
   )
+}
+
+function App() {
+  const [mode, setMode] = useState<string | null>(null)
+  const [token, setToken] = useState<string | null>(localStorage.getItem('token'))
+  const [user, setUser] = useState<User | null>(null)
+
+  useEffect(() => {
+    if (token) {
+      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
+      axios.get(`${API_BASE}/users/me`).then((res) => {
+        setUser(res.data)
+        setMode('pc')
+      }).catch(() => {
+        setToken(null)
+        localStorage.removeItem('token')
+      })
+    }
+  }, [token])
+
+  const handleSelectMode = (selectedMode: string) => {
+    setMode(selectedMode)
+  }
+
+  const handleLogin = (newToken: string, newUser: User) => {
+    localStorage.setItem('token', newToken)
+    setToken(newToken)
+    setUser(newUser)
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem('token')
+    setToken(null)
+    setUser(null)
+    setMode(null)
+  }
+
+  const handleBack = () => {
+    if (token) {
+      handleLogout()
+    } else {
+      setMode(null)
+    }
+  }
+
+  if (mode === null) {
+    return <WelcomePage onSelectMode={handleSelectMode} />
+  }
+
+  if (mode === 'hub') {
+    return <HubConfig onBack={handleBack} onComplete={() => setMode(null)} />
+  }
+
+  if (mode === 'leaf') {
+    return <LeafConfig onBack={handleBack} onComplete={() => setMode(null)} />
+  }
+
+  if (mode === 'pc' && !user) {
+    return <Login onLogin={handleLogin} onBack={handleBack} />
+  }
+
+  if (mode === 'pc' && user) {
+    return <MainApp user={user} onLogout={handleLogout} />
+  }
+
+  return null
 }
 
 export default App
