@@ -99,7 +99,7 @@ function Login({ onLogin, onBack }: { onLogin: (token: string, user: User) => vo
   )
 }
 
-function FileList({ zone, title }: { zone: string, title: string }) {
+function FileList({ zone, title, readonly, user }: { zone: string, title: string, readonly?: boolean, user: User }) {
   const [files, setFiles] = useState<File[]>([])
   const [dragging, setDragging] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -144,7 +144,7 @@ function FileList({ zone, title }: { zone: string, title: string }) {
 
   const handleDelete = async (fileId: string) => {
     if (!window.confirm('确定要删除此文件吗？')) return
-    
+
     setError(null)
     try {
       await axios.delete(`${API_BASE}/files/${fileId}`)
@@ -156,6 +156,10 @@ function FileList({ zone, title }: { zone: string, title: string }) {
   }
 
   const handleFileUpload = async (file: any) => {
+    if (readonly) {
+      setError('实验数据区为只读模式，不支持上传')
+      return
+    }
     setError(null)
     setLoading(true)
     try {
@@ -163,7 +167,8 @@ function FileList({ zone, title }: { zone: string, title: string }) {
       formData.append('file', file)
       formData.append('zone', zone)
       formData.append('path', `/${file.name}`)
-      
+      formData.append('source_device', 'PC')
+
       await axios.post(`${API_BASE}/files/upload`, formData)
       fetchFiles()
     } catch (err: any) {
@@ -200,22 +205,31 @@ function FileList({ zone, title }: { zone: string, title: string }) {
   return (
     <div>
       {error && <div className="alert-box alert-warning">{error}</div>}
-      
-      <div
-        className={`upload-area ${dragging ? 'dragging' : ''}`}
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={onDrop}
-        onClick={() => document.getElementById('fileInput')?.click()}
-      >
-        <input
-          id="fileInput"
-          type="file"
-          style={{ display: 'none' }}
-          onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
-        />
-        <p>📤 点击或拖拽文件到此区域上传</p>
-      </div>
+
+      {!readonly && (
+        <div
+          className={`upload-area ${dragging ? 'dragging' : ''}`}
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+          onDrop={onDrop}
+          onClick={() => document.getElementById('fileInput')?.click()}
+        >
+          <input
+            id="fileInput"
+            type="file"
+            style={{ display: 'none' }}
+            onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
+          />
+          <p>📤 点击或拖拽文件到此区域上传</p>
+        </div>
+      )}
+
+      {readonly && (
+        <div className="alert-box alert-info">
+          🔒 实验数据区为只读模式：数据由实验室电脑（Leaf Agent）自动上传，本客户端仅可查看和下载
+        </div>
+      )}
+
       <div className="file-list">
         <h3>{title} {loading && <span style={{ fontSize: '14px', color: '#888' }}>(加载中...)</span>}</h3>
         {files.length === 0 ? (
@@ -232,6 +246,7 @@ function FileList({ zone, title }: { zone: string, title: string }) {
                   </div>
                   <div className="file-meta">
                     {formatSize(file.size)} · {new Date(file.upload_time).toLocaleString()}
+                    {file.source_device && <span style={{ marginLeft: '8px' }}>· 来源: {file.source_device}</span>}
                   </div>
                 </div>
               </div>
@@ -239,9 +254,11 @@ function FileList({ zone, title }: { zone: string, title: string }) {
                 <button className="btn btn-secondary btn-sm" onClick={() => handleDownload(file)} disabled={loading}>
                   下载
                 </button>
-                <button className="btn btn-danger btn-sm" onClick={() => handleDelete(file.id)} disabled={loading}>
-                  删除
-                </button>
+                {file.uploader === user.id && (
+                  <button className="btn btn-danger btn-sm" onClick={() => handleDelete(file.id)} disabled={loading}>
+                    删除
+                  </button>
+                )}
               </div>
             </div>
           ))
@@ -348,7 +365,7 @@ function MainApp({ user, onLogout }: { user: User, onLogout: () => void }) {
           </div>
         </div>
 
-        {currentPage === 'data' && <FileList zone="DATA" title="实验数据" />}
+        {currentPage === 'data' && <FileList zone="DATA" title="实验数据" readonly={true} user={user} />}
         {currentPage === 'collab' && (
           <div>
             <div className="tab-buttons">
@@ -365,7 +382,7 @@ function MainApp({ user, onLogout }: { user: User, onLogout: () => void }) {
                 👤 按用户
               </button>
             </div>
-            <FileList zone="COLLABORATION" title="协作文件" />
+            <FileList zone="COLLABORATION" title="协作文件" user={user} />
           </div>
         )}
         {currentPage === 'edited' && (

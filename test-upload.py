@@ -71,7 +71,7 @@ def upload_files(token, test_files):
                 data = {
                     "zone": "DATA",
                     "path": f"/Test-Device/{filename}",
-                    "source_device": "Test-Device",
+                    "source_device": "Leaf-Test-Device",  # 模拟 Leaf Agent
                     "is_edit": "false"
                 }
                 

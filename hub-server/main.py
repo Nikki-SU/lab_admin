@@ -265,6 +265,15 @@ async def upload_file(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    # 权限校验：DATA 区只允许 Leaf Agent 上传，PC 客户端只能上传到 COLLABORATION 区
+    is_leaf = "LEAF" in source_device.upper() or source_device.upper().startswith("LEAF")
+
+    if zone == "DATA" and not is_leaf:
+        raise HTTPException(
+            status_code=403,
+            detail="数据区(实验数据)只允许从 Leaf Agent (实验室电脑) 上传，PC 客户端无法上传到该区域"
+        )
+
     # Read file with size check
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
@@ -272,7 +281,7 @@ async def upload_file(
             status_code=413,
             detail=f"File too large. Maximum size is {MAX_FILE_SIZE / (1024*1024):.1f}MB"
         )
-    
+
     file_id = str(uuid.uuid4())
     file_hash = hashlib.sha256(content).hexdigest()
     
