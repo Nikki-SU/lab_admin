@@ -36,7 +36,7 @@ interface LogEntry {
   detail: string
 }
 
-const API_BASE = '/api'
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
 
 function Login({ onLogin, onBack }: { onLogin: (token: string, user: User) => void, onBack: () => void }) {
   const [username, setUsername] = useState('')
@@ -102,13 +102,20 @@ function Login({ onLogin, onBack }: { onLogin: (token: string, user: User) => vo
 function FileList({ zone, title }: { zone: string, title: string }) {
   const [files, setFiles] = useState<File[]>([])
   const [dragging, setDragging] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const fetchFiles = async () => {
+    setLoading(true)
+    setError(null)
     try {
       const res = await axios.get(`${API_BASE}/files`, { params: { zone } })
       setFiles(res.data)
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to fetch files:', err)
+      setError(err.response?.data?.detail || '加载文件失败')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -117,6 +124,7 @@ function FileList({ zone, title }: { zone: string, title: string }) {
   }, [zone])
 
   const handleDownload = async (file: File) => {
+    setError(null)
     try {
       const res = await axios.get(`${API_BASE}/files/${file.id}`, {
         responseType: 'blob'
@@ -128,35 +136,41 @@ function FileList({ zone, title }: { zone: string, title: string }) {
       document.body.appendChild(link)
       link.click()
       link.remove()
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to download:', err)
+      alert(err.response?.data?.detail || '下载失败')
     }
   }
 
   const handleDelete = async (fileId: string) => {
-    if (window.confirm('确定要删除此文件吗？')) {
-      try {
-        await axios.delete(`${API_BASE}/files/${fileId}`)
-        fetchFiles()
-      } catch (err) {
-        console.error('Failed to delete:', err)
-      }
+    if (!window.confirm('确定要删除此文件吗？')) return
+    
+    setError(null)
+    try {
+      await axios.delete(`${API_BASE}/files/${fileId}`)
+      fetchFiles()
+    } catch (err: any) {
+      console.error('Failed to delete:', err)
+      alert(err.response?.data?.detail || '删除失败')
     }
   }
 
   const handleFileUpload = async (file: any) => {
+    setError(null)
+    setLoading(true)
     try {
       const formData = new FormData()
       formData.append('file', file)
       formData.append('zone', zone)
       formData.append('path', `/${file.name}`)
       
-      await axios.post(`${API_BASE}/files/upload`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      })
+      await axios.post(`${API_BASE}/files/upload`, formData)
       fetchFiles()
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to upload:', err)
+      setError(err.response?.data?.detail || '上传失败')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -185,6 +199,8 @@ function FileList({ zone, title }: { zone: string, title: string }) {
 
   return (
     <div>
+      {error && <div className="alert-box alert-warning">{error}</div>}
+      
       <div
         className={`upload-area ${dragging ? 'dragging' : ''}`}
         onDragOver={onDragOver}
@@ -201,7 +217,7 @@ function FileList({ zone, title }: { zone: string, title: string }) {
         <p>📤 点击或拖拽文件到此区域上传</p>
       </div>
       <div className="file-list">
-        <h3>{title}</h3>
+        <h3>{title} {loading && <span style={{ fontSize: '14px', color: '#888' }}>(加载中...)</span>}</h3>
         {files.length === 0 ? (
           <p style={{ color: '#888', padding: '20px 0' }}>暂无文件</p>
         ) : (
@@ -220,10 +236,10 @@ function FileList({ zone, title }: { zone: string, title: string }) {
                 </div>
               </div>
               <div className="file-actions">
-                <button className="btn btn-secondary btn-sm" onClick={() => handleDownload(file)}>
+                <button className="btn btn-secondary btn-sm" onClick={() => handleDownload(file)} disabled={loading}>
                   下载
                 </button>
-                <button className="btn btn-danger btn-sm" onClick={() => handleDelete(file.id)}>
+                <button className="btn btn-danger btn-sm" onClick={() => handleDelete(file.id)} disabled={loading}>
                   删除
                 </button>
               </div>

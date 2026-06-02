@@ -1,3 +1,4 @@
 requests==2.31.0
 watchdog==5.0.3
 python-dotenv==1.0.1
+pyinstaller==6.11.0

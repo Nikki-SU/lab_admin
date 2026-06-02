@@ -21,7 +21,10 @@ from database import (
 # Load environment variables
 load_dotenv()
 
+from fastapi import APIRouter
+
 app = FastAPI(title="LabVault Hub Server")
+api_router = APIRouter(prefix="/api")
 
 # Configure CORS
 origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
@@ -36,9 +39,10 @@ app.add_middleware(
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production-please")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 60 * 24))  # 1 day
+MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 100 * 1024 * 1024))  # 100MB
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/token")
 
 STORAGE_DIR = os.getenv("STORAGE_DIR", "storage")
 os.makedirs(STORAGE_DIR, exist_ok=True)
@@ -188,7 +192,7 @@ def startup_event():
         db.close()
 
 
-@app.post("/token", response_model=Token)
+@api_router.post("/token", response_model=Token)
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
@@ -205,7 +209,7 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@app.get("/users/me", response_model=UserResponse)
+@api_router.get("/users/me", response_model=UserResponse)
 def read_users_me(current_user: User = Depends(get_current_user)):
     return UserResponse(
         id=current_user.id,
@@ -216,7 +220,7 @@ def read_users_me(current_user: User = Depends(get_current_user)):
     )
 
 
-@app.post("/users", response_model=UserResponse)
+@api_router.post("/users", response_model=UserResponse)
 def create_user(user: UserCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # Check permissions
     if current_user.level not in [UserLevel.ADMIN, UserLevel.GROUP_ADMIN]:
@@ -250,18 +254,41 @@ def create_user(user: UserCreate, db: Session = Depends(get_db), current_user: U
     )
 
 
-@app.post("/files/upload")
+@api_router.post("/files/upload")
 async def upload_file(
     file: UploadFile = File(...),
     zone: str = Form(...),
     path: str = Form(...),
+    source_device: str = Form("PC"),
     metadata: str = Form(None),
+    is_edit: bool = Form(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    file_id = str(uuid.uuid4())
+    # Read file with size check
     content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size is {MAX_FILE_SIZE / (1024*1024):.1f}MB"
+        )
+    
+    file_id = str(uuid.uuid4())
     file_hash = hashlib.sha256(content).hexdigest()
+    
+    # Check if file with same path already exists
+    existing_file = db.query(File).filter(
+        File.path == path,
+        File.status == FileStatus.ACTIVE
+    ).first()
+    
+    edited = False
+    edit_count = 0
+    if existing_file:
+        edited = True
+        edit_count = existing_file.edit_count + 1
+        # Mark old file as deleted
+        existing_file.status = FileStatus.DELETED
     
     # Save file to storage
     storage_path = os.path.join(STORAGE_DIR, file_id)
@@ -270,6 +297,11 @@ async def upload_file(
     
     # Parse metadata
     metadata_dict = json.loads(metadata) if metadata else None
+    
+    # Determine source type
+    source_type = SourceType.PC
+    if "LEAF" in source_device.upper():
+        source_type = SourceType.LEAF_DATA
     
     # Create file record
     db_file = File(
@@ -280,11 +312,11 @@ async def upload_file(
         size=len(content),
         hash=file_hash,
         owner_id=current_user.id,
-        edited=False,
-        edit_count=0,
+        edited=edited or is_edit,
+        edit_count=edit_count,
         uploader=current_user.id,
-        source_device="PC",
-        source_type=SourceType.PC,
+        source_device=source_device,
+        source_type=source_type,
         metadata=json.dumps(metadata_dict) if metadata_dict else None,
         status=FileStatus.ACTIVE
     )
@@ -293,14 +325,14 @@ async def upload_file(
     db.refresh(db_file)
     
     if zone == "DATA":
-        log_action(db, current_user.id, "PC", LogAction.ADD, file.filename)
+        log_action(db, current_user.id, source_device, LogAction.ADD if not edited else LogAction.EDIT, file.filename)
     else:
-        log_action(db, current_user.id, "PC", LogAction.COLLAB_ADD, f"{current_user.id}:{file.filename}")
+        log_action(db, current_user.id, source_device, LogAction.COLLAB_ADD, f"{current_user.id}:{file.filename}")
     
     return {"file_id": file_id, "message": "File uploaded successfully"}
 
 
-@app.get("/files", response_model=List[FileResponse])
+@api_router.get("/files", response_model=List[FileResponse])
 def list_files(
     zone: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -345,7 +377,7 @@ def list_files(
     return responses
 
 
-@app.get("/files/{file_id}")
+@api_router.get("/files/{file_id}")
 def get_file(
     file_id: str,
     db: Session = Depends(get_db),
@@ -373,7 +405,7 @@ def get_file(
     return FileResponse(path=storage_path, filename=file.name)
 
 
-@app.delete("/files/{file_id}")
+@api_router.delete("/files/{file_id}")
 def delete_file(
     file_id: str,
     db: Session = Depends(get_db),
@@ -394,7 +426,7 @@ def delete_file(
     return {"message": "File deleted successfully"}
 
 
-@app.get("/logs")
+@api_router.get("/logs")
 def get_logs(
     limit: int = 100,
     db: Session = Depends(get_db),
@@ -414,6 +446,8 @@ def get_logs(
              "location": l.location, "action": l.action.value, "detail": l.detail} 
             for l in logs]
 
+
+app.include_router(api_router)
 
 if __name__ == "__main__":
     import uvicorn
