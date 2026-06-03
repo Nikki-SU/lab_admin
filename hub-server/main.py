@@ -97,6 +97,7 @@ class FileResponse(BaseModel):
     uploader: str
     upload_time: datetime
     source_type: str
+    source_device: str
     metadata: Optional[Dict] = None
 
 
@@ -344,6 +345,7 @@ async def upload_file(
 @api_router.get("/files", response_model=List[FileResponse])
 def list_files(
     zone: Optional[str] = None,
+    edited_only: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -351,6 +353,10 @@ def list_files(
     
     if zone:
         query = query.filter(File.zone == zone)
+    
+    # 筛选已编辑文件
+    if edited_only:
+        query = query.filter(File.edited == True)
     
     # Filter by permissions (simplified)
     if current_user.level == UserLevel.ADMIN:
@@ -360,8 +366,11 @@ def list_files(
         group_users = db.query(User).filter(User.group_id == current_user.group_id).all()
         user_ids = [u.id for u in group_users]
         query = query.filter((File.owner_id == current_user.id) | (File.owner_id.in_(user_ids)))
-    else:
+    elif current_user.level == UserLevel.MEMBER:
         # Can see own files
+        query = query.filter(File.owner_id == current_user.id)
+    else:  # TRAINEE
+        # 只能查看授权的数据
         query = query.filter(File.owner_id == current_user.id)
     
     files = query.order_by(File.upload_time.desc()).all()
@@ -381,6 +390,7 @@ def list_files(
             uploader=f.uploader,
             upload_time=f.upload_time,
             source_type=f.source_type.value,
+            source_device=f.source_device,
             metadata=metadata
         ))
     return responses
@@ -424,9 +434,23 @@ def delete_file(
     if not file:
         raise HTTPException(status_code=404, detail="File not found")
     
-    # Check permissions
-    if current_user.level == UserLevel.MEMBER and file.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to delete this file")
+    # 权限检查：根据用户级别和文件归属
+    if current_user.level == UserLevel.ADMIN:
+        # ADMIN 可以删除任何文件
+        pass
+    elif current_user.level == UserLevel.GROUP_ADMIN:
+        # GROUP_ADMIN 可以删除同组用户的文件
+        if file.owner_id != current_user.id:
+            file_owner = db.query(User).filter(User.id == file.owner_id).first()
+            if file_owner and file_owner.group_id != current_user.group_id:
+                raise HTTPException(status_code=403, detail="Not authorized to delete this file")
+    elif current_user.level == UserLevel.MEMBER:
+        # MEMBER 只能删除自己的文件
+        if file.owner_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Not authorized to delete this file")
+    else:  # TRAINEE
+        # TRAINEE 不能删除任何文件
+        raise HTTPException(status_code=403, detail="Trainee cannot delete files")
     
     file.status = FileStatus.DELETED
     db.commit()

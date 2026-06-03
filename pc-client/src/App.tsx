@@ -24,6 +24,7 @@ interface File {
   uploader: string
   upload_time: string
   source_type: string
+  source_device: string
   metadata?: any
 }
 
@@ -268,6 +269,111 @@ function FileList({ zone, title, readonly, user }: { zone: string, title: string
   )
 }
 
+function EditedFiles({ user }: { user: User }) {
+  const [files, setFiles] = useState<File[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const fetchEditedFiles = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await axios.get(`${API_BASE}/files`, { params: { edited_only: true } })
+      setFiles(res.data)
+    } catch (err: any) {
+      console.error('Failed to fetch edited files:', err)
+      setError(err.response?.data?.detail || '加载已编辑文件失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchEditedFiles()
+  }, [])
+
+  const handleDownload = async (file: File) => {
+    try {
+      const res = await axios.get(`${API_BASE}/files/${file.id}`, {
+        responseType: 'blob'
+      })
+      const url = window.URL.createObjectURL(new Blob([res.data]))
+      const link = document.createElement('a')
+      link.href = url
+      link.setAttribute('download', file.name)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+    } catch (err: any) {
+      alert(err.response?.data?.detail || '下载失败')
+    }
+  }
+
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + ' B'
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+  }
+
+  return (
+    <div>
+      <div className="alert-box alert-warning">
+        ⚠️ 此区域显示所有被编辑过的文件。这些文件在上传后被修改过，系统不提供信任背书，请谨慎使用。
+      </div>
+
+      {error && <div className="alert-box alert-warning">{error}</div>}
+
+      <div className="file-list">
+        <h3>已编辑文件列表 {loading && <span style={{ fontSize: '14px', color: '#888' }}>(加载中...)</span>}</h3>
+
+        {files.length === 0 ? (
+          <p style={{ color: '#888', padding: '20px 0' }}>
+            {loading ? '正在加载...' : '暂无已编辑文件'}
+          </p>
+        ) : (
+          <table className="edited-files-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom: '2px solid #ddd', textAlign: 'left' }}>
+                <th style={{ padding: '12px 8px' }}>文件名</th>
+                <th style={{ padding: '12px 8px' }}>来源设备</th>
+                <th style={{ padding: '12px 8px' }}>编辑次数</th>
+                <th style={{ padding: '12px 8px' }}>大小</th>
+                <th style={{ padding: '12px 8px' }}>上传时间</th>
+                <th style={{ padding: '12px 8px' }}>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {files.map((file) => (
+                <tr key={file.id} style={{ borderBottom: '1px solid #eee', backgroundColor: file.edited ? '#fff3cd' : 'transparent' }}>
+                  <td style={{ padding: '10px 8px' }}>
+                    <span style={{ fontWeight: 'bold' }}>📄 {file.name}</span>
+                    <span style={{ color: '#e74c3c', marginLeft: '8px', fontSize: '12px' }}>
+                      ⚠️ 已编辑 {file.edit_count} 次
+                    </span>
+                  </td>
+                  <td style={{ padding: '10px 8px', color: '#666' }}>{file.source_device || '未知'}</td>
+                  <td style={{ padding: '10px 8px', color: '#e74c3c', fontWeight: 'bold' }}>{file.edit_count}</td>
+                  <td style={{ padding: '10px 8px' }}>{formatSize(file.size)}</td>
+                  <td style={{ padding: '10px 8px' }}>{new Date(file.upload_time).toLocaleString()}</td>
+                  <td style={{ padding: '10px 8px' }}>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => handleDownload(file)}
+                      disabled={loading}
+                    >
+                      下载
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function Logs() {
   const [logs, setLogs] = useState<LogEntry[]>([])
 
@@ -385,16 +491,7 @@ function MainApp({ user, onLogout }: { user: User, onLogout: () => void }) {
             <FileList zone="COLLABORATION" title="协作文件" user={user} />
           </div>
         )}
-        {currentPage === 'edited' && (
-          <div>
-            <div className="alert-box alert-warning">
-              ⚠️ 此区域显示所有被编辑过的文件，系统不提供信任背书
-            </div>
-            <div className="file-list">
-              <p style={{ color: '#888', padding: '20px 0' }}>暂无已编辑文件</p>
-            </div>
-          </div>
-        )}
+        {currentPage === 'edited' && <EditedFiles user={user} />}
         {currentPage === 'logs' && <Logs />}
       </div>
     </div>
